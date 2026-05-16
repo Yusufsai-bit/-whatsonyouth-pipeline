@@ -1,0 +1,4 @@
+scrapling
+Pillow
+requests
+python-dateutil

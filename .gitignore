@@ -1,0 +1,13 @@
+# Pipeline outputs — do not commit
+posted_events.txt
+*.csv
+branded_posts/
+*.jpg
+*.jpeg
+woy_pipeline_log.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
