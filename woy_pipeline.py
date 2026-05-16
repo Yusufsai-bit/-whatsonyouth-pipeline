@@ -3,7 +3,7 @@ What's On Youth — Automated Weekly Pipeline
 Scrape → Brand → Write manifest with scheduled publish times.
 Run every Monday. Blotato publish step handled by Claude cron job.
 """
-import json, sys
+import json, sys, argparse
 from pathlib import Path
 from datetime import datetime, timedelta, timezone, time as dtime
 
@@ -97,15 +97,30 @@ def make_caption(e: dict) -> str:
     return "\n".join(lines)
 
 
+def _clean_date_str(date_str: str) -> str:
+    """Strip Eventbrite noise like '+ 9 more', 'at', trailing commas."""
+    import re
+    s = re.sub(r'\s*\+\s*\d+\s+more.*$', '', date_str, flags=re.IGNORECASE)
+    s = re.sub(r'\bat\b', '', s)
+    s = s.strip().rstrip(',')
+    return s
+
+
 def parse_event_date(date_str: str) -> datetime | None:
     """Return a timezone-aware datetime (AEST) for the event, or None."""
     if not date_str:
         return None
 
-    # ISO formats — try longest first
-    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
+    cleaned = _clean_date_str(date_str)
+
+    # ISO formats — match exact lengths
+    for fmt, length in [
+        ("%Y-%m-%dT%H:%M:%S%z", 25),
+        ("%Y-%m-%dT%H:%M:%S",   19),
+        ("%Y-%m-%d",            10),
+    ]:
         try:
-            dt = datetime.strptime(date_str[:len(fmt)], fmt)
+            dt = datetime.strptime(cleaned[:length], fmt)
             return dt if dt.tzinfo else dt.replace(tzinfo=AEST)
         except ValueError:
             pass
@@ -114,9 +129,18 @@ def parse_event_date(date_str: str) -> datetime | None:
     try:
         from dateutil import parser as dp
         today = datetime.now(AEST)
-        dt = dp.parse(date_str, default=datetime(today.year, 1, 1, tzinfo=AEST))
+        default_this_year = datetime(today.year, today.month, today.day, tzinfo=AEST)
+        dt = dp.parse(cleaned, default=default_this_year, dayfirst=False)
+        if not dt.tzinfo:
+            dt = dt.replace(tzinfo=AEST)
+        # If parsed date is in the past, try next year
         if dt.date() < today.date():
-            dt = dp.parse(date_str, default=datetime(today.year + 1, 1, 1, tzinfo=AEST))
+            default_next_year = datetime(today.year + 1, 1, 1, tzinfo=AEST)
+            dt2 = dp.parse(cleaned, default=default_next_year, dayfirst=False)
+            if not dt2.tzinfo:
+                dt2 = dt2.replace(tzinfo=AEST)
+            if dt2.date() >= today.date():
+                return dt2
         return dt
     except Exception:
         return None
@@ -152,7 +176,7 @@ def compute_schedule_time(date_str: str) -> str | None:
     return post_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def scrape_events() -> list[dict]:
+def scrape_events(dry_run: bool = False) -> list[dict]:
     from scrape_eventbrite_youth import BASE_URLS, extract_events, load_posted_urls, append_posted_urls
     from scrapling.fetchers import StealthyFetcher
     fetcher = StealthyFetcher()
@@ -160,55 +184,128 @@ def scrape_events() -> list[dict]:
     events: list[dict] = []
     for base_url in BASE_URLS:
         events.extend(extract_events(fetcher, base_url, seen_urls))
-    append_posted_urls(events)
+    if not dry_run:
+        append_posted_urls(events)
+    else:
+        print(f"  [DRY RUN] Skipping posted_events.txt write ({len(events)} URLs not logged)")
     return events
 
 
-def run():
+def run(dry_run: bool = False):
     now = datetime.now(AEST)
+    mode_label = "DRY RUN" if dry_run else "LIVE"
     print("=" * 60)
-    print("  What's On Youth — Weekly Pipeline")
+    print(f"  What's On Youth — Weekly Pipeline [{mode_label}]")
     print(f"  {now.strftime('%A %d %B %Y, %I:%M %p AEST')}")
+    if dry_run:
+        print("  ⚠  DRY RUN: No state files will be modified.")
+        print("  ⚠  DRY RUN: Nothing will be published or scheduled.")
     print("=" * 60)
 
     # ── Stage 1: Scrape ────────────────────────────────────────────
     print("\n[1/2] Scraping Eventbrite...")
-    events = scrape_events()
+    events = scrape_events(dry_run=dry_run)
     if not events:
-        print("  No events scraped. Pipeline aborted.")
-        sys.exit(1)
-    print(f"  {len(events)} events found.")
+        print("  No new events scraped. Pipeline complete.")
+        return
+
+    # Sort by parsed date — soonest first; undated events go last
+    today = datetime.now(AEST).date()
+    def _sort_key(e):
+        dt = parse_event_date(e.get("date", ""))
+        if dt is None:
+            return (1, datetime.max.replace(tzinfo=timezone.utc))
+        return (0, dt)
+    events.sort(key=_sort_key)
+
+    # Separate past vs future events
+    future, past, undated = [], [], []
+    for e in events:
+        dt = parse_event_date(e.get("date", ""))
+        if dt is None:
+            undated.append(e)
+        elif dt.date() < today:
+            past.append(e)
+        else:
+            future.append(e)
+
+    print(f"  Total scraped  : {len(events)}")
+    print(f"  Future events  : {len(future)}")
+    print(f"  Past events    : {len(past)} (will be skipped)")
+    print(f"  Undated events : {len(undated)} (scheduled 90 min from now)")
 
     # ── Stage 2: Brand + compute scheduled times ───────────────────
     print("\n[2/2] Branding images...")
     manifest = []
-    for i, e in enumerate(events, 1):
+    skip_no_image, skip_brand_error = 0, 0
+    all_events = future + undated  # skip past entirely
+
+    for i, e in enumerate(all_events, 1):
         if not e.get("image_url", "").strip():
             print(f"  [{i:02d}] SKIP (no image): {e['title'][:50]}")
+            skip_no_image += 1
             continue
         out_path = str(BRANDED_DIR / f"event_{i:02d}.jpg")
+        sched = compute_schedule_time(e.get("date", ""))
         try:
-            brand_image(e["image_url"], out_path, e["title"])
+            if not dry_run:
+                brand_image(e["image_url"], out_path, e["title"])
+            else:
+                print(f"  [{i:02d}] [DRY RUN] Would brand: {e['title'][:50]}")
             manifest.append({
                 "num": i,
                 "title": e["title"],
                 "caption": make_caption(e),
                 "url": e["url"],
                 "image_path": out_path,
-                "scheduled_time": compute_schedule_time(e.get("date", "")),
+                "scheduled_time": sched,
+                "event_date": e.get("date", ""),
             })
         except Exception as exc:
             print(f"  [{i:02d}] ERROR ({exc}): {e['title'][:50]}")
+            skip_brand_error += 1
 
-    with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    if not dry_run:
+        with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
 
-    schedulable = sum(1 for e in manifest if e["scheduled_time"])
-    print(f"\n  Branded:   {len(manifest)}/{len(events)}")
-    print(f"  Scheduled: {schedulable}")
-    print(f"  Manifest:  {MANIFEST_PATH}")
-    print("\n[Done] Ready for Blotato publish step.")
+    schedulable   = sum(1 for e in manifest if e["scheduled_time"])
+    unschedulable = sum(1 for e in manifest if not e["scheduled_time"])
+
+    print(f"\n{'='*60}")
+    print(f"  {'DRY RUN ' if dry_run else ''}PIPELINE REPORT")
+    print(f"{'='*60}")
+    print(f"  Events scraped    : {len(events)}")
+    print(f"  Past events skip  : {len(past)}")
+    print(f"  Accepted          : {len(all_events)}")
+    print(f"  Branded           : {len(manifest)}")
+    print(f"  Skipped (no img)  : {skip_no_image}")
+    print(f"  Skipped (error)   : {skip_brand_error}")
+    print(f"  Schedulable       : {schedulable}")
+    print(f"  Unschedulable     : {unschedulable}")
+    if not dry_run:
+        print(f"  Manifest          : {MANIFEST_PATH}")
+        print(f"  posted_events.txt : updated")
+    else:
+        print(f"  State files       : NOT modified (dry run)")
+        print(f"  Blotato           : NOT called (dry run)")
+    print(f"{'='*60}")
+
+    if unschedulable:
+        print(f"\n  ⚠  {unschedulable} event(s) have unparseable dates and were not schedulable:")
+        for e in manifest:
+            if not e["scheduled_time"]:
+                print(f"       - {e['title'][:55]}  (date: {e['event_date']!r})")
+
+    if not dry_run:
+        print("\n[Done] Ready for Blotato publish step: python woy_publish_api.py")
+    else:
+        print("\n[Done] Dry run complete. To run for real: python woy_pipeline.py")
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description="WOY Weekly Pipeline")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Simulate the pipeline without modifying any state files or publishing")
+    args = parser.parse_args()
+    run(dry_run=args.dry_run)
