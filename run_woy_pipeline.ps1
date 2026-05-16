@@ -1,14 +1,19 @@
 # What's On Youth — Weekly social media pipeline
 # Scheduled via Windows Task Scheduler (every Monday 8:00 AM)
 
-$env:BLOTATO_API_KEY = "blt_juF5unmVvU8/3/mp0fa2TuFhqgmE4wHRcgJlhdbN9uo="
-$logPath = "C:\Users\yusuf\woy_pipeline_log.txt"
+# Set BLOTATO_API_KEY as a Windows System Environment Variable, not here.
+# Control Panel → System → Advanced → Environment Variables → System Variables → New
+if (-not $env:BLOTATO_API_KEY) {
+    Write-Error "BLOTATO_API_KEY environment variable is not set. Aborting."
+    exit 1
+}
+$logPath = Join-Path $PSScriptRoot "woy_pipeline_log.txt"
 $ts      = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
 
 Add-Content $logPath ""
 Add-Content $logPath "[$ts] ===== WOY Weekly Pipeline START ====="
 
-Set-Location C:\Users\yusuf
+Set-Location $PSScriptRoot
 
 # Stage 1: Scrape + brand
 $out1 = python woy_pipeline.py 2>&1
