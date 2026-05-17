@@ -1,0 +1,44 @@
+name: WOY Weekly Pipeline
+
+on:
+  schedule:
+    - cron: '0 8 * * 0'  # Sunday 6 PM AEST (8 AM UTC)
+  workflow_dispatch:       # Allow manual trigger from GitHub UI
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # Needed to commit posted_events.txt back
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Scrapling browser
+        run: scrapling install
+
+      - name: Run pipeline (scrape + brand)
+        run: python woy_pipeline.py
+        env:
+          BLOTATO_API_KEY: ${{ secrets.BLOTATO_API_KEY }}
+
+      - name: Publish to Blotato
+        run: python woy_publish_api.py
+        env:
+          BLOTATO_API_KEY: ${{ secrets.BLOTATO_API_KEY }}
+
+      - name: Save posted_events.txt back to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add posted_events.txt
+          git diff --cached --quiet || git commit -m "chore: update posted_events.txt [skip ci]"
+          git push

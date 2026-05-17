@@ -1,5 +1,5 @@
 # What's On Youth — Weekly social media pipeline
-# Scheduled via Windows Task Scheduler (every Monday 8:00 AM)
+# Scheduled via Windows Task Scheduler (every Sunday 6:00 PM)
 
 # Set BLOTATO_API_KEY as a Windows System Environment Variable, not here.
 # Control Panel → System → Advanced → Environment Variables → System Variables → New
