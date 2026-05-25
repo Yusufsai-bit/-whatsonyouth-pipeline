@@ -1,7 +1,8 @@
 # Pipeline outputs — do not commit
 # posted_events.txt is tracked so GitHub Actions can persist it between runs
 *.csv
-branded_posts/
+branded_posts/*
+!branded_posts/manifest.json
 *.jpg
 *.jpeg
 woy_pipeline_log.txt
