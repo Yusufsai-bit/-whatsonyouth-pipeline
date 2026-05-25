@@ -67,6 +67,8 @@ def make_caption(e: dict) -> str:
     loc_lower = location.lower()
     loc_tag   = next((tag for kw, tag in _LOC_TAGS.items() if kw in loc_lower), "#Victoria")
 
+    location = re.sub(r'https?://\S+', '', location).strip()
+
     lines = [title]
 
     if description:
