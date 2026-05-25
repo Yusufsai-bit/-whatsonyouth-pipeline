@@ -23,7 +23,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Install Scrapling browser
-        run: playwright install --with-deps chromium
+        run: python -m playwright install --with-deps chromium
 
       - name: Run pipeline (scrape + brand)
         run: python woy_pipeline.py
