@@ -1,4 +1,5 @@
-scrapling
+scrapling[all]
+playwright
 Pillow
 requests
 python-dateutil
