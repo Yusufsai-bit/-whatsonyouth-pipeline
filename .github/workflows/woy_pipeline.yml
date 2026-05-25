@@ -35,10 +35,17 @@ jobs:
         env:
           BLOTATO_API_KEY: ${{ secrets.BLOTATO_API_KEY }}
 
-      - name: Save posted_events.txt back to repo
+      - name: Upload branded posts as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: branded-posts-${{ github.run_id }}
+          path: branded_posts/
+          retention-days: 30
+
+      - name: Save pipeline outputs back to repo
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add posted_events.txt
-          git diff --cached --quiet || git commit -m "chore: update posted_events.txt [skip ci]"
+          git add posted_events.txt branded_posts/manifest.json
+          git diff --cached --quiet || git commit -m "chore: update pipeline outputs [skip ci]"
           git push
