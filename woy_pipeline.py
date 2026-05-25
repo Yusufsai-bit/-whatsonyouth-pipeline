@@ -148,34 +148,61 @@ def parse_event_date(date_str: str) -> datetime | None:
         return None
 
 
-def compute_schedule_time(date_str: str) -> str | None:
+def compute_schedule_date(date_str: str):
     """
-    Return UTC ISO 8601 scheduledTime:
-      - 3 days before event at 9 AM AEST
-      - If that's past, 1 day before at 9 AM AEST
-      - If that's also past (event today/yesterday), schedule 1 hour from now
-      - Returns None only if the event date itself can't be parsed
+    Return the date to post on:
+      - 3 days before event, or 1 day before as fallback
+      - 'now' if event is too close or already past (schedule immediately)
+      - None if date is unparseable (post will be marked unschedulable)
     """
     dt = parse_event_date(date_str)
     if dt is None:
         return None
-
     today = datetime.now(AEST).date()
     event_date = dt.date()
-
     for days_before in (DAYS_BEFORE, FALLBACK_DAYS):
         post_date = event_date - timedelta(days=days_before)
-        if post_date > today:
-            post_dt = datetime.combine(post_date, dtime(9, 0, 0), tzinfo=AEST)
-            return post_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        if post_date == today:
-            # Schedule 90 minutes from now so it's definitely in the future
-            post_dt = datetime.now(AEST) + timedelta(minutes=90)
-            return post_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if post_date >= today:
+            return post_date
+    return "now"
 
-    # Event already passed both thresholds — post 90 min from now as last resort
-    post_dt = datetime.now(AEST) + timedelta(minutes=90)
-    return post_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def assign_staggered_times(manifest: list) -> None:
+    """
+    Spread same-day posts evenly across 9 AM – 8 PM AEST.
+    Fewer events on a day = bigger gaps. More events = closer together.
+    Events with no parseable date stay unschedulable (None).
+    Events past both thresholds are staggered from 90 min from now.
+    """
+    from collections import defaultdict
+    WINDOW_START = 9 * 60   # 9:00 AM in minutes
+    WINDOW_END   = 20 * 60  # 8:00 PM in minutes
+
+    groups = defaultdict(list)
+    for entry in manifest:
+        groups[entry.pop("_sched_date")].append(entry)
+
+    for sched_date, entries in groups.items():
+        n = len(entries)
+
+        if sched_date is None:
+            for entry in entries:
+                entry["scheduled_time"] = None
+
+        elif sched_date == "now":
+            for i, entry in enumerate(entries):
+                post_dt = datetime.now(AEST) + timedelta(minutes=90 + i * 30)
+                entry["scheduled_time"] = post_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        elif n == 1:
+            post_dt = datetime.combine(sched_date, dtime(9, 0), tzinfo=AEST)
+            entries[0]["scheduled_time"] = post_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        else:
+            for i, entry in enumerate(entries):
+                slot_min = WINDOW_START + int(i * (WINDOW_END - WINDOW_START) / (n - 1))
+                post_dt = datetime.combine(sched_date, dtime(slot_min // 60, slot_min % 60), tzinfo=AEST)
+                entry["scheduled_time"] = post_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def scrape_events() -> list[dict]:
@@ -243,7 +270,6 @@ def run():
             skip_no_image += 1
             continue
         out_path = str(BRANDED_DIR / f"event_{i:02d}.jpg")
-        sched = compute_schedule_time(e.get("date", ""))
         try:
             brand_image(e["image_url"], out_path, e["title"])
             manifest.append({
@@ -252,12 +278,14 @@ def run():
                 "caption": make_caption(e),
                 "url": e["url"],
                 "image_path": out_path,
-                "scheduled_time": sched,
+                "_sched_date": compute_schedule_date(e.get("date", "")),
                 "event_date": e.get("date", ""),
             })
         except Exception as exc:
             print(f"  [{i:02d}] ERROR ({exc}): {e['title'][:50]}")
             skip_brand_error += 1
+
+    assign_staggered_times(manifest)
 
     with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
