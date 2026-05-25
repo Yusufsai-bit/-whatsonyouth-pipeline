@@ -12,9 +12,9 @@ jobs:
       contents: write      # Needed to commit posted_events.txt back
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5.6.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -36,7 +36,7 @@ jobs:
           BLOTATO_API_KEY: ${{ secrets.BLOTATO_API_KEY }}
 
       - name: Upload branded posts as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: branded-posts-${{ github.run_id }}
           path: branded_posts/
