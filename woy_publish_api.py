@@ -89,6 +89,10 @@ def run():
     with open(MANIFEST_PATH, encoding="utf-8") as f:
         manifest = json.load(f)
 
+    if not manifest:
+        print("  No events in manifest — nothing to publish.")
+        return
+
     schedulable = [e for e in manifest if e.get("scheduled_time")]
     skipped     = len(manifest) - len(schedulable)
 

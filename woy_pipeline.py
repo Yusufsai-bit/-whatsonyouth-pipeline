@@ -200,6 +200,8 @@ def run():
     events = scrape_events()
     if not events:
         print("  No new events scraped. Pipeline complete.")
+        with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
+            json.dump([], f)
         return
 
     # Sort by parsed date — soonest first; undated events go last
