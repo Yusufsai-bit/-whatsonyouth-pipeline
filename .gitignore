@@ -12,3 +12,6 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+
+# Streamlit local secrets — never commit
+.streamlit/secrets.toml

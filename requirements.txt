@@ -3,3 +3,7 @@ playwright
 Pillow
 requests
 python-dateutil
+streamlit
+pandas
+plotly
+anthropic
