@@ -1,8 +1,9 @@
 name: WOY Weekly Pipeline
 
 on:
-  schedule:
-    - cron: '0 8 * * 0'  # Sunday 6 PM AEST (8 AM UTC)
+  # Cron schedule disabled — Eventbrite blocks GitHub Actions' IP range (405s,
+  # no cards found). Weekly runs now happen locally via Task Scheduler
+  # (WhatsonYouth_WeeklyPipeline), which isn't blocked. Kept as manual-only.
   workflow_dispatch:       # Allow manual trigger from GitHub UI
 
 jobs:
