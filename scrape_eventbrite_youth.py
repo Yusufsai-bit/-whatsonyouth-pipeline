@@ -334,30 +334,53 @@ def make_caption(event: dict) -> str:
 # Scraping
 # ---------------------------------------------------------------------------
 
-def scrape_page(fetcher, url: str) -> list:
-    """Fetch one page and return raw card elements."""
-    time.sleep(PAGE_DELAY)
+CARD_SELECTORS = [
+    "[data-testid='event-card']",
+    ".eds-event-card-content",
+    "article.search-event-card-wrapper",
+    ".event-card",
+    "[class*='event-card']",
+]
+
+# Eventbrite's bot detection is inconsistent (sometimes 200 with real cards,
+# sometimes 405 with an empty shell) regardless of source IP. Retry a blocked
+# page a few times with backoff before giving up on it.
+BLOCK_RETRY_DELAYS = [15, 45, 90]  # seconds
+
+
+def _fetch_cards(fetcher, url: str) -> list:
     try:
         page = fetcher.fetch(url, headless=True, network_idle=True, timeout=30000)
     except Exception as exc:
-        print(f"  WARNING: failed to fetch {url} — {exc}")
+        print(f"  WARNING: failed to fetch {url} - {exc}")
         return []
 
     if not page:
         return []
 
-    for selector in [
-        "[data-testid='event-card']",
-        ".eds-event-card-content",
-        "article.search-event-card-wrapper",
-        ".event-card",
-        "[class*='event-card']",
-    ]:
+    for selector in CARD_SELECTORS:
         cards = page.css(selector)
         if cards:
             return cards
 
     return page.css("article") or page.css("li[class*='event']")
+
+
+def scrape_page(fetcher, url: str) -> list:
+    """Fetch one page and return raw card elements, retrying on a blocked response."""
+    time.sleep(PAGE_DELAY)
+    cards = _fetch_cards(fetcher, url)
+    if cards:
+        return cards
+
+    for attempt, delay in enumerate(BLOCK_RETRY_DELAYS, 1):
+        print(f"  No cards found - possible block, retrying in {delay}s (attempt {attempt}/{len(BLOCK_RETRY_DELAYS)})...")
+        time.sleep(delay)
+        cards = _fetch_cards(fetcher, url)
+        if cards:
+            return cards
+
+    return []
 
 
 def extract_events(fetcher, base_url: str, seen_urls: set[str]) -> list[dict]:
