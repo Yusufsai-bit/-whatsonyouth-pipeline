@@ -3,7 +3,7 @@ What's On Youth — Automated Weekly Pipeline
 Scrape → Brand → Write manifest with scheduled publish times.
 Run every Monday. Blotato publish step handled by Claude cron job.
 """
-import json, sys
+import json, re, sys
 from pathlib import Path
 from datetime import datetime, timedelta, timezone, time as dtime
 
@@ -135,14 +135,12 @@ def parse_event_date(date_str: str) -> datetime | None:
         dt = dp.parse(cleaned, default=default_this_year, dayfirst=False)
         if not dt.tzinfo:
             dt = dt.replace(tzinfo=AEST)
-        # If parsed date is in the past, try next year
-        if dt.date() < today.date():
-            default_next_year = datetime(today.year + 1, 1, 1, tzinfo=AEST)
-            dt2 = dp.parse(cleaned, default=default_next_year, dayfirst=False)
-            if not dt2.tzinfo:
-                dt2 = dt2.replace(tzinfo=AEST)
-            if dt2.date() >= today.date():
-                return dt2
+        # A date that lands in the past this year is a real past date, not a
+        # year-rollover ambiguity -- e.g. recurring listings ("Term 3 2026 +9
+        # more") show the term's first session, which is often already gone
+        # by the time we scrape. Blindly bumping to next year turned these
+        # into ~1-year-out schedule times that Blotato rejected with 422
+        # (13-Aug-2026). Let the caller's past-event filter handle it instead.
         return dt
     except Exception:
         return None
