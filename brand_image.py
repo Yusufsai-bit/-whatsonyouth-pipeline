@@ -54,15 +54,19 @@ def brand_image(
     out_path:  str,
     title:     str = "",
     template:  str | None = None,
+    local_path: str | None = None,
 ) -> Image.Image:
 
     if template is None:
         template = detect_template(title)
 
     # ── Load flyer ─────────────────────────────────────────────────────────────
-    resp = requests.get(image_url, timeout=20)
-    resp.raise_for_status()
-    flyer = Image.open(io.BytesIO(resp.content)).convert("RGBA")
+    if local_path:
+        flyer = Image.open(local_path).convert("RGBA")
+    else:
+        resp = requests.get(image_url, timeout=20)
+        resp.raise_for_status()
+        flyer = Image.open(io.BytesIO(resp.content)).convert("RGBA")
     fw, fh = flyer.size
 
     # ── Blurred background — cover-fill 1080×1230, no black bars ──────────────
