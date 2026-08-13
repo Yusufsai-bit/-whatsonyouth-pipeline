@@ -228,10 +228,19 @@ def run():
     print("\n[1/2] Scraping Eventbrite...")
     events = scrape_events()
     if not events:
-        print("  No new events scraped. Pipeline complete.")
+        # Zero events is indistinguishable from "a genuinely quiet week" unless
+        # we treat it as a failure -- this exact silent-zero-results pattern is
+        # what let the Eventbrite scraper run broken for 4 weeks (Jul26-Aug2
+        # 2026) with 405 errors before anyone noticed. Exit non-zero so
+        # run_woy_pipeline.ps1's existing $LASTEXITCODE check actually fires
+        # and logs an ABORT instead of a quiet "Pipeline complete" (audit
+        # 04-Aug-2026).
+        print("  ERROR: zero events scraped. Eventbrite may be blocking requests "
+              "or its HTML structure may have changed -- inspect scrape_page() "
+              "selectors before assuming this is just a quiet week.")
         with open(MANIFEST_PATH, "w", encoding="utf-8") as f:
             json.dump([], f)
-        return
+        sys.exit(1)
 
     # Sort by parsed date — soonest first; undated events go last
     today = datetime.now(AEST).date()
