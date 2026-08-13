@@ -569,10 +569,12 @@ def main():
 
     if not events:
         print(
-            "\nWARNING: No events were parsed. Eventbrite may have changed its HTML "
-            "structure. Inspect the page and update the card selectors in scrape_page()."
+            "\nERROR: No events were parsed. Eventbrite may have changed its HTML "
+            "structure or be blocking requests (this exact failure mode ran silently "
+            "for 4 weeks, Jul26-Aug2 2026, before anyone noticed). Inspect the page "
+            "and update the card selectors in scrape_page()."
         )
-        return
+        sys.exit(1)
 
     print_summary(events)
     print_draft_captions(events, n=5)
