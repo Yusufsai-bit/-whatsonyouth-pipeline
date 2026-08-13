@@ -125,8 +125,8 @@ assets/
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/Yusufsai-bit/whatsonyouth-pipeline
-cd whatsonyouth-pipeline
+git clone https://github.com/Yusufsai-bit/-whatsonyouth-pipeline
+cd -whatsonyouth-pipeline
 
 # 2. Install Python dependencies
 pip install -r requirements.txt
@@ -182,3 +182,16 @@ Location hashtag auto-detected from event location field: Melbourne, Geelong, Ba
 - **Duplicate prevention**: `posted_events.txt` is the source of truth. Pre-seeded into `seen_urls` at scrape time so already-posted events are never re-scraped or re-posted.
 - **Footer selection**: Keyword-based — matches title text against sets of keywords. First match wins (dark > teal > light).
 - **Scheduling**: Posts are timed 3 days before the event at 9 AM AEST. If that window has already passed, falls back to 1 day before, then 90 minutes from now as a last resort.
+
+---
+
+## Claude Code Workflow
+
+- **Context management**: Run `/compact` at ~50% context usage to avoid truncation
+- **Complex tasks**: Use `/plan` before starting multi-step work
+- **Diagnostics**: Run `/doctor` if Claude Code behaves unexpectedly
+- **Long-running commands**: Run as background tasks for better log visibility
+
+## Git Commit Rules
+
+Create **separate commits per file** — do not bundle multiple file changes into one commit. Each file gets its own descriptive commit. This keeps history clean and easy to revert or cherry-pick.
