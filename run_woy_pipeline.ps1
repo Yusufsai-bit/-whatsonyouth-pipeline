@@ -1,8 +1,8 @@
-# What's On Youth — Weekly social media pipeline
+# What's On Youth - Weekly social media pipeline
 # Scheduled via Windows Task Scheduler (every Sunday 6:00 PM)
 
 # Set BLOTATO_API_KEY as a Windows System Environment Variable, not here.
-# Control Panel → System → Advanced → Environment Variables → System Variables → New
+# Control Panel -> System -> Advanced -> Environment Variables -> System Variables -> New
 if (-not $env:BLOTATO_API_KEY) {
     Write-Error "BLOTATO_API_KEY environment variable is not set. Aborting."
     exit 1
@@ -20,7 +20,7 @@ $out1 = python woy_pipeline.py 2>&1
 $out1 | Tee-Object -FilePath $logPath -Append
 
 if ($LASTEXITCODE -ne 0) {
-    Add-Content $logPath "[$ts] ABORT: woy_pipeline.py failed — skipping publish."
+    Add-Content $logPath "[$ts] ABORT: woy_pipeline.py failed - skipping publish."
     exit 1
 }
 
