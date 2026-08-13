@@ -1,5 +1,5 @@
-scrapling[all]
-apify-fingerprint-datapoints==0.13.0
+scrapling[all]>=0.4.14
+apify-fingerprint-datapoints==0.15.0
 playwright
 Pillow
 requests
