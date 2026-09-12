@@ -162,6 +162,15 @@ Or via the PowerShell runner (also sets up Task Scheduler):
 
 ## Caption Logic
 
+**Organizer Instagram tagging**: For each event with an organizer name, `scrape_eventbrite_youth.py` tries to resolve their Instagram handle through a 3-step fallback chain (`_find_organizer_instagram()`), stopping at the first hit:
+1. **Eventbrite profile page** (`/o/<id>`) — check for a linked `instagram.com/...` URL.
+2. **Organizer's own website** — if the profile page links an external (non-social) site instead, fetch it and check its footer/header for an Instagram link.
+3. **Verified web search** — search DuckDuckGo (`html.duckduckgo.com/html/`, no API key) for `"<organizer name>" instagram`, but only accept a result if its snippet/link text actually references the organizer's name or website domain (`_search_instagram_handle()`). This guards against tagging an unrelated account that happens to share a similar name.
+
+If a handle is found it's stored as `organizer_instagram` and appended to the "Hosted by"/"Offered by"/etc. caption line as `(@handle)`, e.g. `Hosted by Alwyns Photo School (@alwynsphotoschool)`. Instagram auto-links `@handle` mentions in captions even when posted via the Blotato API, so this becomes a real tap-able tag on IG; on Facebook it just renders as plain text (the API doesn't support real page tagging via caption text). Most organizers still won't resolve to a handle — this is a best-effort chain, not guaranteed coverage.
+
+`make_caption()` is duplicated in both `scrape_eventbrite_youth.py` and `woy_pipeline.py` — **keep both in sync** when changing caption logic, since `woy_pipeline.py` (not the scraper) is what the weekly production run actually uses. The Instagram-resolution chain itself lives only in `scrape_eventbrite_youth.py` (`extract_events()` / `fetch_event_details()`), which `woy_pipeline.py` imports and calls directly, so it doesn't need its own copy of that part.
+
 Captions are auto-generated per event category:
 
 | Category | Detected by keywords | Hashtag |

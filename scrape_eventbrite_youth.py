@@ -6,10 +6,14 @@ Also produces blotato_draft_posts.csv ready for Blotato publishing.
 """
 
 import csv
+import json
 import re
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs, unquote
+
+import requests
 
 # Force UTF-8 output so Unicode characters in event titles don't crash on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -180,9 +184,169 @@ def _extract_eligibility(page, description: str) -> str:
     return corpus[start:end].strip().strip(".,")
 
 
+_IG_HANDLE_RE = re.compile(r"instagram\.com/([A-Za-z0-9_.]+)", re.IGNORECASE)
+_IG_RESERVED  = {"p", "reel", "reels", "stories", "explore", "accounts", "direct", "tv"}
+
+
+def _extract_instagram_handle(url: str) -> str:
+    """Pull a plain @handle out of an instagram.com URL, or '' if not a profile link."""
+    if not url:
+        return ""
+    m = _IG_HANDLE_RE.search(url)
+    if not m:
+        return ""
+    handle = m.group(1).strip("/")
+    if not handle or handle.lower() in _IG_RESERVED:
+        return ""
+    return handle
+
+
+def _ig_handle_from_page(page) -> str:
+    """Scan a page's DOM for the first instagram.com link. Fine for an
+    organizer's own external website (small sites only have their own social
+    icons) — NOT used for Eventbrite's own organizer profile pages, which also
+    embed Eventbrite's site-wide footer Instagram link and would false-positive
+    on that instead of the organizer's actual account (caught in live testing:
+    every organizer profile resolved to '@eventbrite')."""
+    ig_node = _css_first(page, "a[href*='instagram.com']")
+    return _extract_instagram_handle(_attr(ig_node, "href"))
+
+
+def _organizer_json_from_profile(page) -> dict:
+    """Return the organizer dict Eventbrite embeds as JSON (__NEXT_DATA__) on
+    its own organizer profile pages — scoped to just that organizer's own
+    fields (socials, bio), unlike scanning the page's DOM which also contains
+    Eventbrite's own global footer social links."""
+    html = getattr(page, "html_content", None) or getattr(page, "html", None) or ""
+    m = re.search(
+        r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+        html, re.DOTALL,
+    )
+    if not m:
+        return {}
+    try:
+        data = json.loads(m.group(1))
+    except Exception:
+        return {}
+    return data.get("props", {}).get("pageProps", {}).get("organizer", {}) or {}
+
+
+_BIO_IG_RE = re.compile(r'href="([^"]*instagram\.com[^"]*)"', re.IGNORECASE)
+
+
+def _organizer_instagram_from_json(org: dict) -> str:
+    socials = org.get("socials") or {}
+    handle = _extract_instagram_handle(socials.get("instagram", ""))
+    if handle:
+        return handle
+    # Some organizers link Instagram inline in their free-text bio rather than
+    # through Eventbrite's structured social fields (e.g. "Our Instagram is HERE").
+    bio_match = _BIO_IG_RE.search(org.get("bio") or "")
+    return _extract_instagram_handle(bio_match.group(1)) if bio_match else ""
+
+
+def _organizer_website_from_json(org: dict) -> str:
+    return (org.get("socials") or {}).get("website", "") or ""
+
+
+def _fetch_instagram_from_website(fetcher, url: str) -> str:
+    """Visit an organizer's own website and look for a linked Instagram profile."""
+    try:
+        time.sleep(2)
+        page = fetcher.fetch(url, headless=True, network_idle=True, timeout=20000)
+        if not page:
+            return ""
+        return _ig_handle_from_page(page)
+    except Exception as exc:
+        print(f"    WARNING (organizer website): {exc}")
+        return ""
+
+
+def _resolve_ddg_redirect(href: str) -> str:
+    """DuckDuckGo HTML results wrap outbound links in a /l/?uddg=<encoded> redirect."""
+    if "duckduckgo.com/l/" in href or href.startswith("/l/"):
+        target = parse_qs(urlparse(href).query).get("uddg", [""])[0]
+        return unquote(target) if target else href
+    return href
+
+
+def _search_instagram_handle(organizer_name: str, website_url: str = "") -> str:
+    """Last-resort fallback: search the web for the organizer's Instagram, and
+    only accept a match whose result text actually references the organizer's
+    name or website — avoids tagging an unrelated account with a similar name."""
+    if not organizer_name:
+        return ""
+    try:
+        import lxml.html
+        time.sleep(2)
+        resp = requests.get(
+            "https://html.duckduckgo.com/html/",
+            params={"q": f'"{organizer_name}" instagram'},
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        tree = lxml.html.fromstring(resp.text)
+    except Exception as exc:
+        print(f"    WARNING (web search): {exc}")
+        return ""
+
+    name_tokens = [t for t in re.split(r"\W+", organizer_name.lower()) if len(t) > 2]
+    site_domain = ""
+    if website_url:
+        site_domain = re.sub(r"^https?://(www\.)?", "", website_url).split("/")[0].lower()
+
+    for result in tree.cssselect(".result"):
+        link_nodes = result.cssselect("a.result__a")
+        if not link_nodes:
+            continue
+        href = _resolve_ddg_redirect(link_nodes[0].get("href", ""))
+        if "instagram.com" not in href:
+            continue
+        handle = _extract_instagram_handle(href)
+        if not handle:
+            continue
+
+        snippet = " ".join(result.itertext()).lower()
+        verified = (
+            any(tok in snippet for tok in name_tokens)
+            or any(tok in handle.lower() for tok in name_tokens)
+            or (site_domain and site_domain in snippet)
+        )
+        if verified:
+            return handle
+    return ""
+
+
+def _find_organizer_instagram(fetcher, profile_url: str, organizer_name: str) -> str:
+    """Try, in order: the organizer's Eventbrite profile page, their own website
+    (if linked from that profile), then a verified web search. Returns '' if
+    none of these confidently produce a handle."""
+    website_url = ""
+    try:
+        time.sleep(2)
+        page = fetcher.fetch(profile_url, headless=True, network_idle=True, timeout=30000)
+        if page:
+            org = _organizer_json_from_profile(page)
+            handle = _organizer_instagram_from_json(org)
+            if handle:
+                return handle
+            website_url = _organizer_website_from_json(org)
+    except Exception as exc:
+        print(f"    WARNING (organizer profile): {exc}")
+
+    if website_url:
+        handle = _fetch_instagram_from_website(fetcher, website_url)
+        if handle:
+            return handle
+
+    return _search_instagram_handle(organizer_name, website_url)
+
+
 def fetch_event_details(fetcher, url: str) -> dict:
     """Visit event page; return description, organizer, cost, time, eligibility."""
-    out = {"description": "", "organizer": "", "cost": "", "time": "", "eligibility": ""}
+    out = {"description": "", "organizer": "", "organizer_instagram": "",
+           "cost": "", "time": "", "eligibility": ""}
     if not url:
         return out
     try:
@@ -204,8 +368,12 @@ def fetch_event_details(fetcher, url: str) -> dict:
                 out["description"] = " ".join(sentences[:2]).strip()
                 break
 
-        # Organizer
+        # Organizer — current Eventbrite markup (checked live Sep 2026) uses
+        # data-testid="organizer-data" with CSS-module hashed class names, so
+        # match on the stable data-testid rather than the class. Older
+        # selectors kept as fallback in case Eventbrite reverts/A-B tests.
         for sel in [
+            "[data-testid='organizer-data'] a[href*='/o/']",
             "[data-automation='organizer-profile-name']",
             ".organizer-listing__name a",
             ".organizer-listing__name",
@@ -218,6 +386,20 @@ def fetch_event_details(fetcher, url: str) -> dict:
                 if name and 2 < len(name) < 80:
                     out["organizer"] = name
                     break
+
+        # Organizer's Instagram — not shown on the event page itself, only
+        # (sometimes) on their Eventbrite profile page, so only bother
+        # fetching it if we actually found an organizer name.
+        if out["organizer"]:
+            profile_link = _css_first(page, "a[href*='/o/']")
+            profile_href = _attr(profile_link, "href")
+            profile_url = profile_href if profile_href.startswith("http") else (
+                f"https://www.eventbrite.com.au{profile_href}" if profile_href else ""
+            )
+            if profile_url:
+                out["organizer_instagram"] = _find_organizer_instagram(
+                    fetcher, profile_url, out["organizer"]
+                )
 
         # Cost — look for price/free in ticket section
         for sel in [
@@ -288,6 +470,7 @@ def make_caption(event: dict) -> str:
     url         = event.get("url", "")
     description = event.get("description", "")
     organizer   = event.get("organizer", "")
+    organizer_ig = event.get("organizer_instagram", "")
     cost        = event.get("cost", "")
 
     category = detect_category(title)
@@ -318,7 +501,10 @@ def make_caption(event: dict) -> str:
         lines += ["", "Key details:"] + details
 
     if organizer:
-        lines += ["", f"{rel_word} {organizer}"]
+        org_line = f"{rel_word} {organizer}"
+        if organizer_ig:
+            org_line += f" (@{organizer_ig})"
+        lines += ["", org_line]
 
     lines += ["", f"Apply/Register: {url}"]
 
@@ -449,6 +635,7 @@ def extract_events(fetcher, base_url: str, seen_urls: set[str]) -> list[dict]:
                 "image_url": image_url,
                 "description": "",
                 "organizer": "",
+                "organizer_instagram": "",
                 "cost": "",
                 "time": "",
                 "eligibility": "",
@@ -501,7 +688,8 @@ def save_events_csv(events: list[dict]) -> None:
         writer = csv.DictWriter(
             f,
             fieldnames=["title", "date", "location", "url", "image_url",
-                        "description", "organizer", "cost", "time", "eligibility"],
+                        "description", "organizer", "organizer_instagram",
+                        "cost", "time", "eligibility"],
             extrasaction="ignore",
         )
         writer.writeheader()
