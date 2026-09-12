@@ -55,6 +55,7 @@ def make_caption(e: dict) -> str:
     url         = e.get("url", "")
     description = e.get("description", "")
     organizer   = e.get("organizer", "")
+    organizer_ig = e.get("organizer_instagram", "")
     cost        = e.get("cost", "")
 
     category = detect_category(title)
@@ -87,7 +88,10 @@ def make_caption(e: dict) -> str:
         lines += ["", "Key details:"] + details
 
     if organizer:
-        lines += ["", f"{rel_word} {organizer}"]
+        org_line = f"{rel_word} {organizer}"
+        if organizer_ig:
+            org_line += f" (@{organizer_ig})"
+        lines += ["", org_line]
 
     lines += ["", f"Apply/Register: {url}"]
 
