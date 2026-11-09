@@ -140,7 +140,11 @@ def _extract_time(page) -> str:
         if dt_attr:
             try:
                 from dateutil import parser as dp
+                from dateutil import tz
                 dt = dp.parse(dt_attr)
+                # Eventbrite's datetime attr is UTC; show Melbourne local time
+                if dt.tzinfo:
+                    dt = dt.astimezone(tz.gettz("Australia/Melbourne"))
                 h = dt.hour % 12 or 12
                 return f"{h}:{dt.minute:02d} {'AM' if dt.hour < 12 else 'PM'}"
             except Exception:
